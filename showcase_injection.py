@@ -2,42 +2,38 @@
 Author information: Thomas I. EDER
 To contact me: thomas@katagames.io
 ----------------------------------
-PMDI stands for: Py- Multiple Dependecy Injection.
+PMDI stands for: Py- Multiple Dependency Injection.
 
-This is a form of dependency injection that still allows
-for retrieving knowledge from the target module ; module into which
-new dependencies will be injected.
+This file showcases the PMDI pattern using a simple Car / Engine example.
 
-The PMDI-pattern (designed by Thomas, see author information above)
-is an elegant, python-based, generic solution that eases
-code sharing between modules of a large-scale software project.
+We use the *Pattern B* style:
+- Define abstract "*Base" classes that inherit from CustomizableCode
+  and declare which dependencies they need.
+- Use wire_dependencies(...) to create *concrete*, wired classes that
+  can actually be instantiated.
 
-For instance, I, Thomas have used the pattern it so i can split:
-- pyved_engine (the project of writing a python-based game engine), on one hand, and
-- pyvm_component on the other hand.
-Thanks to the PMDI-pattern, I split two modules that are complex in themselves, in a clean way.
+Why this pattern is useful:
+---------------------------
+It lets you:
+- Define high-level behavior (what a Car or Engine needs) in one place.
+- Provide concrete implementations (which Bumper, which Engine, etc.)
+  in a separate wiring step.
+- Keep modules with complex logic loosely coupled, while still allowing
+  code to be shared between them in a controlled, explicit way.
 
-The PMDI-pattern enbales intricate solution to work well. For example, I can:
-- Retrieve information from the high-level module
-- Define a new class based on that particular information, but at a low-level of abstraction
-- Inject a well-suited/customized class back into the higher-level module. This way code has been shared,
-but using clean, explicit interfaces that are added to the 2 modules!
-
-By doing so, we facilitate a low coupling between modules,
-while not preventing the developer from sharing re-usable code snippets,
-in a "bidirectional" manner.
-
-This pattern can serve as a go-to solution for intricate coding problems:
-- Import high-level definitions (such as event defintions) from PYVED
-- Declare a custom class that uses HL definitions but at the current level,
-- Inject the newly-defined custom class back into PYVED
+This is especially useful in large codebases (like pyved_engine) where
+you want to:
+- Import high-level definitions (events, abstractions, etc.)
+- Define custom classes at a lower level using those definitions
+- Inject these custom classes back into the high-level module in a clean,
+  explicit manner.
 """
 from abc import ABC, abstractmethod
-from cd_patterns import CustomizableCode, inj_dependencies
+from cd_patterns import CustomizableCode, wire_dependencies
 
 
 # ------------------------------
-# Abstract Classes
+# Abstract Component Interfaces
 # ------------------------------
 class AbstractBumper(ABC):
     @abstractmethod
@@ -88,10 +84,10 @@ class AbstractEngine(ABC):
 
 
 # ------------------------------
-# Concrete Classes for Each Component
+# Concrete Implementations of Components
 # ------------------------------
 class BumperClass(AbstractBumper):
-    def __init__(self, hp):
+    def __init__(self, hp: int):
         """
         Initializes the bumper with its hit points (hp).
         """
@@ -121,17 +117,29 @@ class CylinderClass(AbstractCylinder):
 
 
 # ------------------------------
-# Customizable Pattern Demo: Engine and Car are Defined as Customizable Classes
+# Customizable Pattern Demo (Pattern B)
+# EngineBase and CarBase are *abstract* customizable classes.
+# Concrete Engine and Car classes are produced via wire_dependencies.
 # ------------------------------
-class EngineClass(AbstractEngine, CustomizableCode):
-    
+class EngineBase(AbstractEngine, CustomizableCode):
+    """
+    Abstract engine definition that says:
+    - "I need a 'cylinder' dependency"
+    - "At construction, please instantiate it for me"
+
+    The actual class used for 'cylinder' will be provided later, via
+    wire_dependencies(...). As long as EngineBase is not wired, it is
+    considered abstract and cannot be instantiated.
+    """
+    required_dependencies = {"cylinder"}  # it answers: Which dependencies required for this base class?
+
     def __init__(self, etype, producer_name):
         """
         Initializes the engine with its type and producer's name.
-        Also ensures that dependencies like the cylinder are instantiated.
+        Also ensures that the 'cylinder' dependency is instantiated.
         """
         self.instantiate_dependencies(
-            cylinder_kwargs={}  # Ensure the Cylinder dependency is passed
+            cylinder_kwargs={}  # The wired Cylinder class will be called with these kwargs
         )
         print(f"An engine has been built, type: {etype}, produced by: {producer_name}")
 
@@ -150,10 +158,21 @@ class EngineClass(AbstractEngine, CustomizableCode):
         print("Engine needs more cooling!")
 
 
-class Car(CustomizableCode):
+class CarBase(CustomizableCode):
+    """
+    Abstract car definition that says:
+    - "I need bumper, windshield, and engine dependencies"
+    - "At construction, please instantiate them for me"
+
+    The concrete classes for bumper, windshield, and engine will be
+    provided later using wire_dependencies(...).
+    """
+    required_dependencies = {"bumper", "windshield", "engine"}
+
     def __init__(self):
         """
-        Initializes the car, injecting all necessary dependencies (bumper, windshield, engine).
+        Initializes the car by injecting all necessary dependencies
+        (bumper, windshield, engine).
         """
         self.instantiate_dependencies(
             bumper_kwargs={'hp': 95},
@@ -172,24 +191,43 @@ class Car(CustomizableCode):
 
 
 # ------------------------------
-# Dependency Injection for Engine and Car Classes
+# Wiring Step: Produce Concrete Classes
 # ------------------------------
-# Injecting dependencies for Engine and Car classes to ensure proper instantiation
-inj_dependencies(EngineClass, cylinder=CylinderClass)
-inj_dependencies(Car, bumper=BumperClass, windshield=WindshieldClass, engine=EngineClass)
+
+# Here we decide *which* actual classes are used to satisfy the dependencies
+# declared in EngineBase and CarBase. The result are two fully wired,
+# concrete classes: Engine and Car.
+
+# EngineBase requires a 'cylinder' dependency
+Engine = wire_dependencies(EngineBase, cylinder=CylinderClass)
+
+# CarBase requires 'bumper', 'windshield', and 'engine' dependencies.
+# Note that we pass the *wired* Engine class as the 'engine' dependency.
+Car = wire_dependencies(
+    CarBase,
+    bumper=BumperClass,
+    windshield=WindshieldClass,
+    engine=Engine,
+)
 
 
 # ------------------------------
-# Example Usage
+# Showcasing PMDI / Le "cas d'école"
 # ------------------------------
 try:
-    # Instantiating Car with all dependencies injected
-    car = Car()  # This could raise an error if engine_kwargs is missing or if dependencies are incorrect
+    # Trying to instantiate EngineBase() or CarBase() directly would raise TypeError,
+    # because they are "abstract until wired".
+    #
+    # engine_base = EngineBase("V6", "ACME")  # -> TypeError
+    # car_base = CarBase()                       # -> TypeError
+
+    # Instantiating the wired Car class works as expected:
+    car = Car()
     print('-')
-    car.test_car()  # Testing the car by calling its methods
+    car.test_car()       # Testing the car by calling its methods
     print('+')
     car.engine.overheat()  # Testing the engine's overheat functionality
     print('Bumper status?', car.bumper.hp)  # Printing the bumper's hit points
 
-except RuntimeError as e:
-    print(f"Error: {e}")
+except (RuntimeError, TypeError) as e:
+    print(f"Showcasing PMDI raised an exception: {e}")
